@@ -19,19 +19,37 @@ except ImportError:
     OPENAI_AVAILABLE = False
     logger.warning("OpenAI library not available. Using simple parsing.")
 
+# Try to import Gemini, but make it optional
+try:
+    from google import genai
+    from google.genai import types
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logger.warning("google-genai library not available. Gemini parsing will not be available.")
+
 
 class MessageParser:
     """Parses user messages to extract today's work and tomorrow's commitments."""
     
-    def __init__(self, use_openai: bool = False, openai_api_key: Optional[str] = None):
+    def __init__(
+        self,
+        use_openai: bool = False,
+        openai_api_key: Optional[str] = None,
+        use_gemini: bool = False,
+        gemini_api_key: Optional[str] = None
+    ):
         """
         Initialize the message parser.
         
         Args:
             use_openai: Whether to use OpenAI API for parsing
             openai_api_key: OpenAI API key (if use_openai is True)
+            use_gemini: Whether to use Gemini API for parsing
+            gemini_api_key: Gemini API key (if use_gemini is True)
         """
         self.use_openai = use_openai and OPENAI_AVAILABLE
+        self.use_gemini = use_gemini and GEMINI_AVAILABLE
         
         if self.use_openai:
             if not openai_api_key:
@@ -43,6 +61,22 @@ class MessageParser:
             else:
                 logger.warning("OpenAI requested but no API key provided. Falling back to simple parsing.")
                 self.use_openai = False
+
+        self.gemini_client = None
+        if self.use_gemini:
+            if not gemini_api_key:
+                gemini_api_key = os.getenv("GEMINI_API_KEY")
+            
+            if gemini_api_key:
+                try:
+                    self.gemini_client = genai.Client(api_key=gemini_api_key)
+                    logger.info("Gemini API initialized for message parsing")
+                except Exception as e:
+                    logger.error(f"Failed to initialize Gemini Client: {e}")
+                    self.use_gemini = False
+            else:
+                logger.warning("Gemini requested but no API key provided. Falling back.")
+                self.use_gemini = False
     
     def parse_message(self, message: str) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -54,11 +88,67 @@ class MessageParser:
         Returns:
             Tuple of (today_work, tomorrow_commitment)
         """
-        if self.use_openai:
+        if self.use_gemini:
+            return self._parse_with_gemini(message)
+        elif self.use_openai:
             return self._parse_with_openai(message)
         else:
             return self._parse_simple(message)
     
+    def _parse_with_gemini(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Use Gemini API to intelligently parse the message.
+        
+        Args:
+            message: The user's message text
+            
+        Returns:
+            Tuple of (today_work, tomorrow_commitment)
+        """
+        try:
+            prompt = f"""Parse the following standup message and extract:
+1. What the user worked on today
+2. What the user committed to work on tomorrow
+
+Message: "{message}"
+
+Respond in JSON format:
+{{
+    "today_work": "what they worked on today or null",
+    "tomorrow_commitment": "what they committed to do tomorrow or null"
+}}
+
+Only extract clear commitments. If something is vague or uncertain, set it to null."""
+
+            response = self.gemini_client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.3,
+                ),
+            )
+            
+            import json
+            result = json.loads(response.text)
+            
+            today_work = result.get("today_work")
+            tomorrow_commitment = result.get("tomorrow_commitment")
+            
+            # Clean up null strings
+            today_work = today_work if today_work and today_work.lower() != "null" else None
+            tomorrow_commitment = tomorrow_commitment if tomorrow_commitment and tomorrow_commitment.lower() != "null" else None
+            
+            logger.info(f"Gemini parsed message: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}")
+            return today_work, tomorrow_commitment
+            
+        except Exception as e:
+            logger.error(f"Error parsing with Gemini: {e}. Falling back.")
+            if self.use_openai:
+                return self._parse_with_openai(message)
+            else:
+                return self._parse_simple(message)
+
     def _parse_with_openai(self, message: str) -> Tuple[Optional[str], Optional[str]]:
         """
         Use OpenAI API to intelligently parse the message.

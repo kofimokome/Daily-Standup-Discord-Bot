@@ -48,6 +48,8 @@ BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 CHANNEL_ID = os.getenv('DISCORD_CHANNEL_ID')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 USE_OPENAI = os.getenv('USE_OPENAI', 'false').lower() == 'true'
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
+USE_GEMINI = os.getenv('USE_GEMINI', 'false').lower() == 'true'
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID', '')
 
 # Response tracking window (hours after standup message)
@@ -68,7 +70,9 @@ class StandupBot(commands.Bot):
         self.database = Database()
         self.message_parser = MessageParser(
             use_openai=USE_OPENAI,
-            openai_api_key=OPENAI_API_KEY if OPENAI_API_KEY else None
+            openai_api_key=OPENAI_API_KEY if OPENAI_API_KEY else None,
+            use_gemini=USE_GEMINI,
+            gemini_api_key=GEMINI_API_KEY if GEMINI_API_KEY else None
         )
         
         # Get channel ID from database or env

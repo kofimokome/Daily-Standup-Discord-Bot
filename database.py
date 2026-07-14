@@ -9,6 +9,7 @@ Uses SQLite to store:
 
 import sqlite3
 import json
+import os
 from datetime import datetime, date
 from typing import List, Dict, Optional, Tuple
 import logging
@@ -19,14 +20,14 @@ logger = logging.getLogger(__name__)
 class Database:
     """Handles all database operations for the standup bot."""
     
-    def __init__(self, db_path: str = "standup_bot.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """
         Initialize the database connection.
         
         Args:
-            db_path: Path to the SQLite database file
+            db_path: Path to the SQLite database file (defaults to DATABASE_PATH env var or 'standup_bot.db')
         """
-        self.db_path = db_path
+        self.db_path = db_path or os.environ.get("DATABASE_PATH", "standup_bot.db")
         self.init_database()
     
     def get_connection(self) -> sqlite3.Connection:

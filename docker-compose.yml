@@ -1,0 +1,17 @@
+services:
+  bot:
+    build: .
+    container_name: daily-standup-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_PATH=/app/data/standup_bot.db
+    volumes:
+      - bot-data:/app/data
+      # If using Google Sheets integration with local credentials.json,
+      # you can uncomment the line below to mount it:
+      # - ./credentials.json:/app/credentials.json
+
+volumes:
+  bot-data:

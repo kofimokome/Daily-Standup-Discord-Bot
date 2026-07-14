@@ -1,0 +1,38 @@
+# Environment files
+.env
+
+# Secrets & Credentials
+credentials.json
+
+# Local database
+*.db
+standup_bot.db
+
+# Logs
+*.log
+bot.log
+
+# Python cache / virtual environment
+__pycache__/
+.venv/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+*,cover
+.hypothesis/
+.pytest_cache/
+.mypy_cache/
+
+# OS specific files
+.DS_Store
+Thumbs.db

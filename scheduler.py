@@ -89,22 +89,22 @@ class StandupScheduler:
             embed.set_footer(text="💡 Tip: Be specific about your accomplishments and plans!")
             embed.timestamp = datetime.now()
             
-            # Find and mention the Developer role
+            # Find and mention the intern role
             mention_text = ""
             if channel.guild:
-                # Try to find the Developer role (case-insensitive)
-                developer_role = discord.utils.get(channel.guild.roles, name="Developer")
+                # Try to find the intern role (case-insensitive)
+                developer_role = discord.utils.get(channel.guild.roles, name="intern")
                 if not developer_role:
                     # Try alternative common names
                     developer_role = discord.utils.get(channel.guild.roles, name="developer")
                 if not developer_role:
-                    developer_role = discord.utils.get(channel.guild.roles, name="Developers")
+                    developer_role = discord.utils.get(channel.guild.roles, name="interns")
                 
                 if developer_role:
                     mention_text = f"{developer_role.mention}\n\n"
                     logger.info(f"Mentioning role: {developer_role.name}")
                 else:
-                    logger.warning("Developer role not found. Standup sent without role mention.")
+                    logger.warning("intern role not found. Standup sent without role mention.")
             
             sent_message = await channel.send(content=mention_text, embed=embed)
             logger.info(f"Sent daily standup message to channel {self.channel_id}")
