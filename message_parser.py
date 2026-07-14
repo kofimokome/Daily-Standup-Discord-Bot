@@ -107,15 +107,15 @@ class MessageParser:
         """
         try:
             prompt = f"""Parse the following standup message and extract:
-1. What the user worked on today
-2. What the user committed to work on tomorrow
+1. What the user worked on yesterday
+2. What the user committed to work on today
 
 Message: "{message}"
 
 Respond in JSON format:
 {{
-    "today_work": "what they worked on today or null",
-    "tomorrow_commitment": "what they committed to do tomorrow or null"
+    "today_work": "what they worked on yesterday or null",
+    "tomorrow_commitment": "what they committed to do today or null"
 }}
 
 Only extract clear commitments. If something is vague or uncertain, set it to null."""
@@ -163,15 +163,15 @@ Only extract clear commitments. If something is vague or uncertain, set it to nu
             client = openai.OpenAI()
             
             prompt = f"""Parse the following standup message and extract:
-1. What the user worked on today
-2. What the user committed to work on tomorrow
+1. What the user worked on yesterday
+2. What the user committed to work on today
 
 Message: "{message}"
 
 Respond in JSON format:
 {{
-    "today_work": "what they worked on today or null",
-    "tomorrow_commitment": "what they committed to do tomorrow or null"
+    "today_work": "what they worked on yesterday or null",
+    "tomorrow_commitment": "what they committed to do today or null"
 }}
 
 Only extract clear commitments. If something is vague or uncertain, set it to null."""

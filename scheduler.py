@@ -70,14 +70,14 @@ class StandupScheduler:
             )
             
             embed.add_field(
-                name="📝 Today's Question",
-                value="What did you work on today for the project?",
+                name="📝 Yesterday's Question",
+                value="What did you work on yesterday?",
                 inline=False
             )
             
             embed.add_field(
-                name="🚀 Tomorrow's Question",
-                value="What will you work on tomorrow?",
+                name="🚀 Today's Question",
+                value="What will you work on today?",
                 inline=False
             )
             
@@ -127,8 +127,8 @@ class StandupScheduler:
                                 description="Hi there! It's time for the daily standup. Please reply directly to me (via DM) with your update.",
                                 color=discord.Color.green()
                             )
-                            embed_dm.add_field(name="📝 Today's Question", value="What did you work on today for the project?", inline=False)
-                            embed_dm.add_field(name="🚀 Tomorrow's Question", value="What will you work on tomorrow?", inline=False)
+                            embed_dm.add_field(name="📝 Yesterday's Question", value="What did you work on yesterday?", inline=False)
+                            embed_dm.add_field(name="🚀 Today's Question", value="What will you work on today?", inline=False)
                             await member.send(embed=embed_dm)
                             logger.info(f"Sent standup DM reminder to {member.name}")
                         except Exception as dm_err:
@@ -232,9 +232,9 @@ class StandupScheduler:
                 for member, resp in submitted_ontime:
                     ontime_text += f"**{member.display_name}**:\n"
                     if resp.get('today_work'):
-                        ontime_text += f"- Today: {resp['today_work']}\n"
+                        ontime_text += f"- Yesterday: {resp['today_work']}\n"
                     if resp.get('tomorrow_commitment'):
-                        ontime_text += f"- Tomorrow: {resp['tomorrow_commitment']}\n"
+                        ontime_text += f"- Today: {resp['tomorrow_commitment']}\n"
                 embed.add_field(name=f"✅ Submitted On-Time ({len(submitted_ontime)})", value=ontime_text[:1024], inline=False)
             else:
                 embed.add_field(name="✅ Submitted On-Time (0)", value="No on-time submissions.", inline=False)
@@ -245,9 +245,9 @@ class StandupScheduler:
                 for member, resp in submitted_late:
                     late_text += f"**{member.display_name}**:\n"
                     if resp.get('today_work'):
-                        late_text += f"- Today: {resp['today_work']}\n"
+                        late_text += f"- Yesterday: {resp['today_work']}\n"
                     if resp.get('tomorrow_commitment'):
-                        late_text += f"- Tomorrow: {resp['tomorrow_commitment']}\n"
+                        late_text += f"- Today: {resp['tomorrow_commitment']}\n"
                 embed.add_field(name=f"⚠️ Submitted Late ({len(submitted_late)})", value=late_text[:1024], inline=False)
 
             # Not submitted section

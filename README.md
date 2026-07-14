@@ -346,9 +346,8 @@ Tasks are stored in a Google Sheet with the following columns:
 
 #### Daily Standup Workflow
 
-1. **Daily Standup**: At the configured time (default 5:00 PM), the bot sends a message asking:
-   - "What did you work on today for the project? What will you work on tomorrow?"
-   - Mentions the `@Developer` role (if available) to notify the team
+1. **Daily Standup**: At the configured time (default 5:00 PM), the bot sends private DM reminders asking:
+   - "What did you work on yesterday? What will you work on today?"
 
 2. **Response Tracking**: Users reply to the standup message. The bot:
    - Monitors responses for 2-3 hours after the standup message
