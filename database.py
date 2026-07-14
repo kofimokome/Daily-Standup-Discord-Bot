@@ -152,6 +152,30 @@ class Database:
         conn.close()
         
         return [dict(row) for row in rows]
+
+    def get_responses_for_date(self, target_date: date) -> List[Dict]:
+        """
+        Get all standup responses for a specific date.
+        
+        Args:
+            target_date: Date to get responses for
+            
+        Returns:
+            List of response records
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM standup_responses
+            WHERE response_date = ?
+        """, (target_date,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+
     
     def get_pending_follow_ups(self, target_date: date) -> List[Dict]:
         """

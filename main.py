@@ -164,32 +164,36 @@ class StandupBot(commands.Bot):
     
     async def on_message(self, message: discord.Message):
         """
-        Handle incoming messages in the standup channel.
+        Handle incoming messages in the standup channel or via DMs.
         
         This method:
         1. Filters out bot messages
-        2. Checks if the message is in the standup channel
+        2. Checks if the message is in the standup channel or a DM
         3. Tracks responses within the response window (default 3 hours)
-        4. Processes both replies to standup messages and direct messages in the channel
+        4. Processes both replies to standup messages and direct messages in the channel / via DM
         """
         # Ignore messages from bots (including our own)
         if message.author.bot:
             return
         
-        # Only process messages in the configured standup channel
-        if message.channel.id != self.scheduler.channel_id:
+        # Check if the message is a DM
+        is_dm = message.guild is None
+        
+        # Only process messages in the configured standup channel or via DM
+        if not is_dm and message.channel.id != self.scheduler.channel_id:
             return
         
         # Check if we should track this message (within response window)
-        # This allows users to respond to standup messages within a reasonable time frame
         if self.last_standup_time:
             time_diff = (datetime.now() - self.last_standup_time).total_seconds() / 3600
             if time_diff <= RESPONSE_WINDOW_HOURS:
-                # Check if it's a reply to the standup message
-                if message.reference and message.reference.message_id == self.standup_message_id:
+                # If it's a DM, process it directly
+                if is_dm:
+                    await self.process_standup_response(message)
+                # Check if it's a reply to the standup message in the channel
+                elif message.reference and message.reference.message_id == self.standup_message_id:
                     await self.process_standup_response(message)
                 # Also process direct messages in the channel (not replies)
-                # This allows users to respond without replying to the original message
                 elif not message.reference:
                     await self.process_standup_response(message)
         
@@ -205,6 +209,7 @@ class StandupBot(commands.Bot):
         2. Parses the message to extract today's work and tomorrow's commitment
         3. Saves the response to the database
         4. Sends a confirmation message to the user
+        5. Forwards the report in real-time to the standup channel if submitted via DM
         
         Args:
             message: The user's response message (Discord message object)
@@ -232,6 +237,14 @@ class StandupBot(commands.Bot):
                 raw_message=raw_message
             )
             
+            # Check if late based on configured timeout
+            is_late = False
+            timeout_min = int(self.database.get_config('standup_timeout_minutes') or os.getenv('STANDUP_TIMEOUT_MINUTES') or '30')
+            if self.last_standup_time:
+                time_diff_min = (datetime.now() - self.last_standup_time).total_seconds() / 60
+                if time_diff_min > timeout_min:
+                    is_late = True
+            
             # Send confirmation
             confirmation_parts = []
             if today_work:
@@ -241,7 +254,29 @@ class StandupBot(commands.Bot):
             
             if confirmation_parts:
                 confirmation = "\n".join(confirmation_parts)
+                if is_late:
+                    confirmation = "⚠️ **Late Submission Recorded**\n" + confirmation
                 await message.reply(confirmation)
+                
+                # If submitted via DM, forward to the configured public standup channel in real-time
+                if message.guild is None and self.scheduler.channel_id:
+                    channel = self.get_channel(self.scheduler.channel_id)
+                    if channel:
+                        embed = discord.Embed(
+                            title=f"📥 Standup Report from {message.author.display_name}",
+                            color=discord.Color.orange() if is_late else discord.Color.green(),
+                            timestamp=datetime.now()
+                        )
+                        if is_late:
+                            embed.title += " (⚠️ LATE SUBMISSION)"
+                        
+                        if today_work:
+                            embed.add_field(name="Today's Work", value=today_work, inline=False)
+                        if tomorrow_commitment:
+                            embed.add_field(name="Tomorrow's Commitment", value=tomorrow_commitment, inline=False)
+                            
+                        await channel.send(embed=embed)
+                        logger.info(f"Forwarded DM report from {username} to channel {self.scheduler.channel_id}")
             else:
                 await message.reply("⚠️ I couldn't parse your response. Please make sure to mention what you worked on today and what you'll work on tomorrow.")
             
@@ -256,6 +291,7 @@ class StandupBot(commands.Bot):
         self.scheduler.update_standup_time(hour, minute)
         self.database.set_config('standup_hour', str(hour))
         self.database.set_config('standup_minute', str(minute))
+
 
 
 # Create bot instance
@@ -305,6 +341,86 @@ async def set_time(interaction: discord.Interaction, hour: int, minute: int):
         logger.error(f"Error setting time: {e}")
         await interaction.response.send_message(
             f'❌ Error setting time: {str(e)}',
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name='set_role', description='Set the target role to ping and remind for daily standups')
+@app_commands.describe(role_name='The name of the role to mention (e.g. intern)')
+async def set_role(interaction: discord.Interaction, role_name: str):
+    """Set the standup role."""
+    try:
+        bot.database.set_config('standup_role_name', role_name)
+        await interaction.response.send_message(
+            f'✅ Standup role set to **{role_name}**',
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error setting role: {e}")
+        await interaction.response.send_message(
+            f'❌ Error setting role: {str(e)}',
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name='set_days', description='Set the days of the week when standup runs')
+@app_commands.describe(days='Comma-separated days, e.g. tue,wed,thu,fri,sat')
+async def set_days(interaction: discord.Interaction, days: str):
+    """Set active standup days."""
+    try:
+        # Validate days format
+        valid_days = {'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'}
+        input_days = [d.strip().lower() for d in days.split(',') if d.strip()]
+        
+        invalid_inputs = [d for d in input_days if d not in valid_days]
+        if invalid_inputs:
+            await interaction.response.send_message(
+                f'❌ Invalid days: {", ".join(invalid_inputs)}. Please use: mon, tue, wed, thu, fri, sat, sun',
+                ephemeral=True
+            )
+            return
+            
+        days_str = ','.join(input_days)
+        bot.database.set_config('standup_days', days_str)
+        
+        # Restart scheduler jobs with new days
+        hour = int(bot.database.get_config('standup_hour') or os.getenv('STANDUP_HOUR') or '17')
+        minute = int(bot.database.get_config('standup_minute') or os.getenv('STANDUP_MINUTE') or '0')
+        bot.scheduler.update_standup_time(hour, minute)
+        
+        await interaction.response.send_message(
+            f'✅ Standup active days set to **{days_str}**',
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error setting active days: {e}")
+        await interaction.response.send_message(
+            f'❌ Error setting active days: {str(e)}',
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name='set_timeout', description='Set the late submission timeout duration')
+@app_commands.describe(minutes='Timeout in minutes (e.g. 30)')
+async def set_timeout(interaction: discord.Interaction, minutes: int):
+    """Set late submission timeout."""
+    if minutes <= 0:
+        await interaction.response.send_message(
+            '❌ Timeout must be a positive integer.',
+            ephemeral=True
+        )
+        return
+        
+    try:
+        bot.database.set_config('standup_timeout_minutes', str(minutes))
+        await interaction.response.send_message(
+            f'✅ Late submission timeout set to **{minutes}** minutes',
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error setting timeout: {e}")
+        await interaction.response.send_message(
+            f'❌ Error setting timeout: {str(e)}',
             ephemeral=True
         )
 
@@ -425,6 +541,12 @@ async def test_follow_ups(interaction: discord.Interaction, use_today: bool = Tr
             
             try:
                 user = bot.get_user(user_id)
+                if not user:
+                    try:
+                        user = await bot.fetch_user(user_id)
+                    except Exception:
+                        pass
+                
                 mention = user.mention if user else f"@{username}"
                 
                 # Create an embed for a more appealing message
@@ -449,23 +571,22 @@ async def test_follow_ups(interaction: discord.Interaction, use_today: bool = Tr
                 embed.set_footer(text="Reply with ✅ if done, or let us know your progress!")
                 embed.timestamp = datetime.now()
                 
-                await target_channel.send(embed=embed)
-                logger.info(f"Sent test follow-up to user {username} for commitment: {commitment_text}")
-                follow_up_count += 1
-                
-                # For testing, we can optionally mark as sent or not
-                # Uncomment the next line if you want to mark them as sent:
-                # bot.database.mark_follow_up_sent(commitment_id, date.today())
+                if user:
+                    await user.send(embed=embed)
+                    logger.info(f"Sent DM test follow-up to user {username} for commitment: {commitment_text}")
+                    follow_up_count += 1
+                else:
+                    logger.warning(f"Could not send DM test follow-up to user {username} (user object not resolvable). Skipping fallback to channel.")
                 
             except Exception as e:
                 logger.error(f"Error sending follow-up to user {user_id}: {e}")
         
-        # Restore original channel
+        # Restore original channel if we temporarily changed it
         if channel and original_channel_id:
             bot.scheduler.set_channel(original_channel_id)
         
         await interaction.followup.send(
-            f'✅ Sent {follow_up_count} follow-up message(s) to {target_channel.mention}!\n\n'
+            f'✅ Sent {follow_up_count} follow-up message(s) to users\' private DMs!\n\n'
             f'📅 Checked commitments from: {check_date.strftime("%Y-%m-%d")}',
             ephemeral=True
         )
@@ -478,13 +599,12 @@ async def test_follow_ups(interaction: discord.Interaction, use_today: bool = Tr
         )
 
 
-@bot.tree.command(name='schedule_test_standup', description='Schedule a test standup message X minutes from now')
+@bot.tree.command(name='schedule_test_standup', description='Schedule test standup DM reminders X minutes from now')
 @app_commands.describe(
-    minutes='Number of minutes from now to send the standup (e.g., 2 for 2 minutes)',
-    channel='Optional: channel to send the test standup to'
+    minutes='Number of minutes from now to send the standup (e.g., 2 for 2 minutes)'
 )
-async def schedule_test_standup(interaction: discord.Interaction, minutes: int, channel: Optional[discord.TextChannel] = None):
-    """Schedule a test standup message for a specific time."""
+async def schedule_test_standup(interaction: discord.Interaction, minutes: int):
+    """Schedule a test standup."""
     try:
         if minutes < 1:
             await interaction.response.send_message(
@@ -492,17 +612,8 @@ async def schedule_test_standup(interaction: discord.Interaction, minutes: int, 
                 ephemeral=True
             )
             return
-        
+            
         await interaction.response.defer(ephemeral=True)
-        
-        # Determine which channel to use
-        original_channel_id = bot.scheduler.channel_id
-        
-        if channel:
-            bot.scheduler.set_channel(channel.id)
-        elif not bot.scheduler.channel_id:
-            # No channel configured, use current channel
-            bot.scheduler.set_channel(interaction.channel.id)
         
         # Schedule the test standup
         job_id = bot.scheduler.schedule_test_standup(minutes)
@@ -510,19 +621,11 @@ async def schedule_test_standup(interaction: discord.Interaction, minutes: int, 
         # Calculate target time for display
         from datetime import timedelta
         target_time = datetime.now(bot.scheduler.timezone) + timedelta(minutes=minutes)
-        target_channel = bot.get_channel(bot.scheduler.channel_id) or interaction.channel
-        
-        # Restore original channel if we temporarily changed it
-        if channel and original_channel_id:
-            bot.scheduler.set_channel(original_channel_id)
         
         await interaction.followup.send(
-            f'✅ Scheduled test standup for {target_channel.mention}!\n\n'
-            f'⏰ Will send in **{minutes} minute(s)**\n'
-            f'📅 At: {target_time.strftime("%Y-%m-%d %H:%M:%S %Z")}',
+            f'✅ Test standup DM reminders scheduled for {target_time.strftime("%H:%M:%S")} ({minutes} minutes from now)!',
             ephemeral=True
         )
-        
     except Exception as e:
         logger.error(f"Error scheduling test standup: {e}")
         await interaction.followup.send(
@@ -531,58 +634,90 @@ async def schedule_test_standup(interaction: discord.Interaction, minutes: int, 
         )
 
 
-@bot.tree.command(name='test_standup', description='Send a test standup message immediately (uses current channel if no channel set)')
-@app_commands.describe(channel='Optional: channel to send the test standup to')
-async def test_standup(interaction: discord.Interaction, channel: Optional[discord.TextChannel] = None):
-    """Send a test standup message."""
+@bot.tree.command(name='test_standup', description='Send test standup DM reminders immediately')
+async def test_standup(interaction: discord.Interaction):
+    """Send test standup DM reminders immediately."""
     try:
         await interaction.response.defer(ephemeral=True)
         
-        # Determine which channel to use
-        target_channel = None
-        original_channel_id = bot.scheduler.channel_id
-        
-        if channel:
-            # Use the specified channel
-            target_channel = channel
-            bot.scheduler.set_channel(channel.id)
-        elif bot.scheduler.channel_id:
-            # Use the configured channel
-            target_channel = bot.get_channel(bot.scheduler.channel_id)
-            if not target_channel:
-                # Fallback to current channel if configured channel not found
-                target_channel = interaction.channel
-                bot.scheduler.set_channel(interaction.channel.id)
-        else:
-            # No channel configured, use current channel
-            target_channel = interaction.channel
-            bot.scheduler.set_channel(interaction.channel.id)
-        
-        # Send test standup
+        # Send test standup (sends DMs directly)
         await bot.scheduler.send_daily_standup()
         
-        # Update tracking
-        bot.last_standup_time = datetime.now()
-        if target_channel:
-            # Get the last message (should be our standup)
-            async for message in target_channel.history(limit=1):
-                bot.standup_message_id = message.id
-                break
-        
-        # Restore original channel if we temporarily changed it
-        if channel and original_channel_id:
-            bot.scheduler.set_channel(original_channel_id)
-        elif not original_channel_id and channel:
-            # If there was no channel set before, keep the new one
-            pass
-        
         await interaction.followup.send(
-            f'✅ Test standup message sent to {target_channel.mention}!', 
+            '✅ Test standup DM reminders sent to members of the configured role!', 
             ephemeral=True
         )
         
     except Exception as e:
         logger.error(f"Error sending test standup: {e}")
+        await interaction.followup.send(
+            f'❌ Error: {str(e)}',
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name='test_summary', description='Send the daily standup status summary report immediately')
+async def test_summary(interaction: discord.Interaction):
+    """Test the standup summary report generation."""
+    try:
+        await interaction.response.defer(ephemeral=True)
+        
+        # Trigger the summary report
+        await bot.scheduler.send_standup_summary()
+        
+        await interaction.followup.send(
+            '✅ Standup status summary report sent!', 
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error testing standup summary: {e}")
+        await interaction.followup.send(
+            f'❌ Error: {str(e)}',
+            ephemeral=True
+        )
+
+
+@bot.tree.command(name='show_config', description='Show the current daily standup bot configuration')
+async def show_config(interaction: discord.Interaction):
+    """Show current bot configurations."""
+    try:
+        await interaction.response.defer(ephemeral=True)
+        
+        # Pull configurations
+        db = bot.database
+        timezone = os.getenv('TIMEZONE', 'UTC')
+        
+        channel_id = db.get_config('standup_channel_id') or os.getenv('DISCORD_CHANNEL_ID')
+        role_name = db.get_config('standup_role_name') or os.getenv('STANDUP_ROLE') or 'intern'
+        days = db.get_config('standup_days') or os.getenv('STANDUP_DAYS') or 'mon,tue,wed,thu,fri,sat,sun'
+        timeout = db.get_config('standup_timeout_minutes') or os.getenv('STANDUP_TIMEOUT_MINUTES') or '30'
+        
+        hour = db.get_config('standup_hour') or os.getenv('STANDUP_HOUR') or '17'
+        minute = db.get_config('standup_minute') or os.getenv('STANDUP_MINUTE') or '0'
+        
+        channel_mention = "Not configured"
+        if channel_id:
+            channel = bot.get_channel(int(channel_id))
+            if channel:
+                channel_mention = channel.mention
+            else:
+                channel_mention = f"ID: {channel_id} (not found)"
+                
+        embed = discord.Embed(
+            title="⚙️ Daily Standup Configuration",
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="🕒 Standup Time", value=f"{int(hour):02d}:{int(minute):02d}", inline=True)
+        embed.add_field(name="🌍 Timezone", value=timezone, inline=True)
+        embed.add_field(name="📅 Active Days", value=days.upper(), inline=True)
+        embed.add_field(name="👥 Ping Role", value=f"`{role_name}`", inline=True)
+        embed.add_field(name="⏳ Submission Timeout", value=f"{timeout} minutes", inline=True)
+        embed.add_field(name="📺 Target Channel", value=channel_mention, inline=True)
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error fetching configuration: {e}")
         await interaction.followup.send(
             f'❌ Error: {str(e)}',
             ephemeral=True
