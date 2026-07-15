@@ -51,11 +51,21 @@ class Database:
                 response_date DATE NOT NULL,
                 today_work TEXT,
                 tomorrow_commitment TEXT,
+                blockers TEXT,
                 raw_message TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, response_date)
             )
         """)
+        
+        # Ensure blockers column exists (migration for existing databases)
+        try:
+            cursor.execute("ALTER TABLE standup_responses ADD COLUMN blockers TEXT")
+            conn.commit()
+            logger.info("Added blockers column to standup_responses table")
+        except sqlite3.OperationalError:
+            # Column already exists
+            pass
         
         # Table for tracking follow-up messages
         cursor.execute("""
@@ -91,6 +101,7 @@ class Database:
         response_date: date,
         today_work: Optional[str] = None,
         tomorrow_commitment: Optional[str] = None,
+        blockers: Optional[str] = None,
         raw_message: str = ""
     ) -> int:
         """
@@ -103,6 +114,7 @@ class Database:
             response_date: Date of the response
             today_work: What the user worked on today
             tomorrow_commitment: What the user committed to do tomorrow
+            blockers: Any blockers mentioned by the user
             raw_message: Original message text
             
         Returns:
@@ -114,9 +126,9 @@ class Database:
         try:
             cursor.execute("""
                 INSERT OR REPLACE INTO standup_responses 
-                (user_id, username, message_id, response_date, today_work, tomorrow_commitment, raw_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, username, message_id, response_date, today_work, tomorrow_commitment, raw_message))
+                (user_id, username, message_id, response_date, today_work, tomorrow_commitment, blockers, raw_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, username, message_id, response_date, today_work, tomorrow_commitment, blockers, raw_message))
             
             response_id = cursor.lastrowid
             conn.commit()

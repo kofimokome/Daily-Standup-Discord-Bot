@@ -129,6 +129,7 @@ class StandupScheduler:
                             )
                             embed_dm.add_field(name="📝 Yesterday's Question", value="What did you work on yesterday?", inline=False)
                             embed_dm.add_field(name="🚀 Today's Question", value="What will you work on today?", inline=False)
+                            embed_dm.add_field(name="🛑 Blockers", value="Do you have any blockers? (If none, write 'None')", inline=False)
                             await member.send(embed=embed_dm)
                             logger.info(f"Sent standup DM reminder to {member.name}")
                         except Exception as dm_err:
@@ -235,6 +236,8 @@ class StandupScheduler:
                         ontime_text += f"- Yesterday: {resp['today_work']}\n"
                     if resp.get('tomorrow_commitment'):
                         ontime_text += f"- Today: {resp['tomorrow_commitment']}\n"
+                    if resp.get('blockers'):
+                        ontime_text += f"- Blockers: {resp['blockers']}\n"
                 embed.add_field(name=f"✅ Submitted On-Time ({len(submitted_ontime)})", value=ontime_text[:1024], inline=False)
             else:
                 embed.add_field(name="✅ Submitted On-Time (0)", value="No on-time submissions.", inline=False)
@@ -248,6 +251,8 @@ class StandupScheduler:
                         late_text += f"- Yesterday: {resp['today_work']}\n"
                     if resp.get('tomorrow_commitment'):
                         late_text += f"- Today: {resp['tomorrow_commitment']}\n"
+                    if resp.get('blockers'):
+                        late_text += f"- Blockers: {resp['blockers']}\n"
                 embed.add_field(name=f"⚠️ Submitted Late ({len(submitted_late)})", value=late_text[:1024], inline=False)
 
             # Not submitted section

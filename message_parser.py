@@ -78,15 +78,15 @@ class MessageParser:
                 logger.warning("Gemini requested but no API key provided. Falling back.")
                 self.use_gemini = False
     
-    def parse_message(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+    def parse_message(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
-        Parse a user message to extract today's work and tomorrow's commitment.
+        Parse a user message to extract yesterday's work, today's work, and blockers.
         
         Args:
             message: The user's message text
             
         Returns:
-            Tuple of (today_work, tomorrow_commitment)
+            Tuple of (today_work, tomorrow_commitment, blockers)
         """
         if self.use_gemini:
             return self._parse_with_gemini(message)
@@ -95,7 +95,7 @@ class MessageParser:
         else:
             return self._parse_simple(message)
     
-    def _parse_with_gemini(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+    def _parse_with_gemini(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Use Gemini API to intelligently parse the message.
         
@@ -103,22 +103,24 @@ class MessageParser:
             message: The user's message text
             
         Returns:
-            Tuple of (today_work, tomorrow_commitment)
+            Tuple of (today_work, tomorrow_commitment, blockers)
         """
         try:
             prompt = f"""Parse the following standup message and extract:
 1. What the user worked on yesterday
 2. What the user committed to work on today
+3. Any blockers or challenges the user mentioned
 
 Message: "{message}"
 
 Respond in JSON format:
 {{
     "today_work": "what they worked on yesterday or null",
-    "tomorrow_commitment": "what they committed to do today or null"
+    "tomorrow_commitment": "what they committed to do today or null",
+    "blockers": "any blockers or challenges they mentioned or null"
 }}
 
-Only extract clear commitments. If something is vague or uncertain, set it to null."""
+Only extract clear statements. If something is vague or uncertain, set it to null."""
 
             response = self.gemini_client.models.generate_content(
                 model='gemini-2.5-flash',
@@ -134,13 +136,15 @@ Only extract clear commitments. If something is vague or uncertain, set it to nu
             
             today_work = result.get("today_work")
             tomorrow_commitment = result.get("tomorrow_commitment")
+            blockers = result.get("blockers")
             
             # Clean up null strings
             today_work = today_work if today_work and today_work.lower() != "null" else None
             tomorrow_commitment = tomorrow_commitment if tomorrow_commitment and tomorrow_commitment.lower() != "null" else None
+            blockers = blockers if blockers and blockers.lower() != "null" else None
             
-            logger.info(f"Gemini parsed message: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}")
-            return today_work, tomorrow_commitment
+            logger.info(f"Gemini parsed message: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}, blockers={bool(blockers)}")
+            return today_work, tomorrow_commitment, blockers
             
         except Exception as e:
             logger.error(f"Error parsing with Gemini: {e}. Falling back.")
@@ -149,7 +153,7 @@ Only extract clear commitments. If something is vague or uncertain, set it to nu
             else:
                 return self._parse_simple(message)
 
-    def _parse_with_openai(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+    def _parse_with_openai(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Use OpenAI API to intelligently parse the message.
         
@@ -157,7 +161,7 @@ Only extract clear commitments. If something is vague or uncertain, set it to nu
             message: The user's message text
             
         Returns:
-            Tuple of (today_work, tomorrow_commitment)
+            Tuple of (today_work, tomorrow_commitment, blockers)
         """
         try:
             client = openai.OpenAI()
@@ -165,16 +169,18 @@ Only extract clear commitments. If something is vague or uncertain, set it to nu
             prompt = f"""Parse the following standup message and extract:
 1. What the user worked on yesterday
 2. What the user committed to work on today
+3. Any blockers or challenges the user mentioned
 
 Message: "{message}"
 
 Respond in JSON format:
 {{
     "today_work": "what they worked on yesterday or null",
-    "tomorrow_commitment": "what they committed to do today or null"
+    "tomorrow_commitment": "what they committed to do today or null",
+    "blockers": "any blockers or challenges they mentioned or null"
 }}
 
-Only extract clear commitments. If something is vague or uncertain, set it to null."""
+Only extract clear statements. If something is vague or uncertain, set it to null."""
 
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -191,114 +197,140 @@ Only extract clear commitments. If something is vague or uncertain, set it to nu
             
             today_work = result.get("today_work")
             tomorrow_commitment = result.get("tomorrow_commitment")
+            blockers = result.get("blockers")
             
             # Clean up null strings
             today_work = today_work if today_work and today_work.lower() != "null" else None
             tomorrow_commitment = tomorrow_commitment if tomorrow_commitment and tomorrow_commitment.lower() != "null" else None
+            blockers = blockers if blockers and blockers.lower() != "null" else None
             
-            logger.info(f"OpenAI parsed message: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}")
-            return today_work, tomorrow_commitment
+            logger.info(f"OpenAI parsed message: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}, blockers={bool(blockers)}")
+            return today_work, tomorrow_commitment, blockers
             
         except Exception as e:
             logger.error(f"Error parsing with OpenAI: {e}. Falling back to simple parsing.")
             return self._parse_simple(message)
     
-    def _parse_simple(self, message: str) -> Tuple[Optional[str], Optional[str]]:
+    def _parse_simple(self, message: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
         Simple pattern-based parsing as fallback.
         
         Looks for common patterns like:
-        - "today I worked on...", "worked on...", "did..."
-        - "tomorrow I will...", "will work on...", "plan to...", "going to..."
+        - "yesterday I worked on...", "yesterday...", "yesterday's work..."
+        - "today I will...", "today...", "today's work..."
+        - "blockers...", "blocking..."
         
         Args:
             message: The user's message text
             
         Returns:
-            Tuple of (today_work, tomorrow_commitment)
+            Tuple of (today_work, tomorrow_commitment, blockers)
         """
         message_lower = message.lower()
         
-        # Patterns for today's work
-        today_patterns = [
-            r"today\s+(?:i\s+)?(?:worked\s+on|did|completed|finished|accomplished)\s*:?\s*(.+?)(?:\s+tomm?orrow|tomorrow|$)",
-            r"(?:worked\s+on|did|completed|finished|accomplished)\s*:?\s*(.+?)(?:\s+tomm?orrow|tomorrow|$)",
-            r"today\s*:?\s*(.+?)(?:\s+tomm?orrow|tomorrow|$)",
+        # Patterns for yesterday's work
+        yesterday_patterns = [
+            r"yesterday\s+(?:i\s+)?(?:worked\s+on|did|completed|finished|accomplished)\s*:?\s*(.+?)(?:\s+today|\s+blocker|$)",
+            r"(?:worked\s+on|did|completed|finished|accomplished)\s*:?\s*(.+?)(?:\s+today|\s+blocker|$)",
+            r"yesterday's?\s+work\s*:?\s*(.+?)(?:\s+today|\s+blocker|$)",
+            r"yesterday\s*:?\s*(.+?)(?:\s+today|\s+blocker|$)",
         ]
         
-        # Patterns for tomorrow's commitment
-        tomorrow_patterns = [
-            r"tomorrow\s+(?:i\s+)?(?:will|plan\s+to|going\s+to|gonna)\s+(?:work\s+on|do|complete|finish)?\s*:?\s*(.+)",
-            r"(?:will|plan\s+to|going\s+to|gonna)\s+(?:work\s+on|do|complete|finish)?\s*(.+?)(?:\.|$)",
+        # Patterns for today's work
+        today_patterns = [
+            r"today\s+(?:i\s+)?(?:will|plan\s+to|going\s+to|gonna|work\s+on|am\s+working\s+on|do)\s*(?:work\s+on|do|complete|finish)?\s*:?\s*(.+?)(?:\s+blocker|$)",
+            r"today's?\s+work\s*:?\s*(.+?)(?:\s+blocker|$)",
+            r"today\s*:?\s*(.+?)(?:\s+blocker|$)",
+            r"(?:will|plan\s+to|going\s+to|gonna|working\s+on)\s+(?:work\s+on|do|complete|finish)?\s*(.+?)(?:\.|\s+blocker|$)",
+        ]
+
+        # Patterns for blockers
+        blocker_patterns = [
+            r"(?:blocker|blocking|obstacle|challenge)s?\s*:?\s*(.+)",
         ]
         
         today_work = None
         tomorrow_commitment = None
+        blockers = None
         
-        # Try to extract today's work
-        for pattern in today_patterns:
+        # Try to extract blockers first if they exist, to prevent them bleeding into today/tomorrow
+        for pattern in blocker_patterns:
+            match = re.search(pattern, message_lower, re.IGNORECASE | re.DOTALL)
+            if match:
+                blockers = match.group(1).strip()
+                if blockers:
+                    break
+        
+        # If blockers found, clean them up
+        if blockers:
+            # Clean up common prefixes
+            blockers = re.sub(r"^(none|no|nil)\b.*", "", blockers, flags=re.IGNORECASE)
+            if blockers:
+                blockers = blockers.strip(".,;: \n\r")
+                if len(blockers) < 3:
+                    blockers = None
+
+        # Try to extract yesterday's work (today_work variable)
+        for pattern in yesterday_patterns:
             match = re.search(pattern, message_lower, re.IGNORECASE | re.DOTALL)
             if match:
                 today_work = match.group(1).strip()
-                # Clean up common prefixes
                 today_work = re.sub(r"^(on|that|the)\s+", "", today_work, flags=re.IGNORECASE)
                 if today_work:
                     break
         
-        # Try to extract tomorrow's commitment
-        for pattern in tomorrow_patterns:
+        # Try to extract today's work (tomorrow_commitment variable)
+        for pattern in today_patterns:
             match = re.search(pattern, message_lower, re.IGNORECASE | re.DOTALL)
             if match:
                 tomorrow_commitment = match.group(1).strip()
-                # Clean up common prefixes
                 tomorrow_commitment = re.sub(r"^(on|that|the)\s+", "", tomorrow_commitment, flags=re.IGNORECASE)
                 if tomorrow_commitment:
                     break
         
-        # If we found a "tomorrow" section but no explicit pattern matched, try to split on "tomorrow"
-        if not tomorrow_commitment and "tomorrow" in message_lower:
-            parts = re.split(r"tomorrow", message_lower, flags=re.IGNORECASE)
+        # Fallbacks for split-based parsing if patterns fail
+        if not tomorrow_commitment and "today" in message_lower:
+            parts = re.split(r"today", message_lower, flags=re.IGNORECASE)
             if len(parts) > 1:
-                tomorrow_commitment = parts[1].strip()
-                # Remove common prefixes
-                tomorrow_commitment = re.sub(r"^(i\s+)?(?:will|plan\s+to|going\s+to|gonna)\s+(?:work\s+on|do)?\s*:?\s*", "", tomorrow_commitment, flags=re.IGNORECASE)
+                today_part = parts[1]
+                if "blocker" in today_part:
+                    today_part = today_part.split("blocker")[0]
+                tomorrow_commitment = today_part.strip()
+                tomorrow_commitment = re.sub(r"^(i\s+)?(?:will|plan\s+to|going\s+to|gonna|work\s+on|do)?\s*:?\s*", "", tomorrow_commitment, flags=re.IGNORECASE)
                 if tomorrow_commitment:
                     tomorrow_commitment = tomorrow_commitment.strip(".,;: ")
         
-        # If we found a "today" section but no explicit pattern matched, try to split on "today"
-        if not today_work and "today" in message_lower:
-            parts = re.split(r"today", message_lower, flags=re.IGNORECASE)
+        if not today_work and "yesterday" in message_lower:
+            parts = re.split(r"yesterday", message_lower, flags=re.IGNORECASE)
             if len(parts) > 1:
-                # Take the part after "today" but before "tomorrow" if it exists
-                today_part = parts[1]
-                if "tomorrow" in today_part:
-                    today_part = today_part.split("tomorrow")[0]
-                today_work = today_part.strip()
-                # Clean up common prefixes
+                yesterday_part = parts[1]
+                if "today" in yesterday_part:
+                    yesterday_part = yesterday_part.split("today")[0]
+                if "blocker" in yesterday_part:
+                    yesterday_part = yesterday_part.split("blocker")[0]
+                today_work = yesterday_part.strip()
                 today_work = re.sub(r"^(i\s+)?(?:worked\s+on|did|completed|finished|accomplished)\s*:?\s*", "", today_work, flags=re.IGNORECASE)
                 if today_work:
                     today_work = today_work.strip(".,;: ")
         
         # If still no match, try to split on common separators
         if not today_work and not tomorrow_commitment:
-            # Try splitting on newlines or periods
-            sentences = re.split(r"[\.\n]|(?:\s+tomm?orrow)", message, flags=re.IGNORECASE)
+            sentences = re.split(r"[\.\n]", message, flags=re.IGNORECASE)
             if len(sentences) >= 2:
-                # Assume first sentence is today, second is tomorrow
                 today_work = sentences[0].strip()
-                tomorrow_commitment = sentences[1].strip() if len(sentences) > 1 else None
+                tomorrow_commitment = sentences[1].strip()
         
         # Clean up results
         if today_work:
             today_work = today_work.strip(".,;: \n\r")
-            if len(today_work) < 3:  # Too short, probably not meaningful
+            if len(today_work) < 3:
                 today_work = None
         
         if tomorrow_commitment:
             tomorrow_commitment = tomorrow_commitment.strip(".,;: \n\r")
-            if len(tomorrow_commitment) < 3:  # Too short, probably not meaningful
+            if len(tomorrow_commitment) < 3:
                 tomorrow_commitment = None
         
-        logger.debug(f"Simple parsing result: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}")
-        return today_work, tomorrow_commitment
+        logger.debug(f"Simple parsing result: today={bool(today_work)}, tomorrow={bool(tomorrow_commitment)}, blockers={bool(blockers)}")
+        return today_work, tomorrow_commitment, blockers
 

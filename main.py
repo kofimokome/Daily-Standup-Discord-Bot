@@ -224,7 +224,7 @@ class StandupBot(commands.Bot):
             logger.info(f"Processing standup response from {username}: {raw_message[:100]}")
             
             # Parse the message
-            today_work, tomorrow_commitment = self.message_parser.parse_message(raw_message)
+            today_work, tomorrow_commitment, blockers = self.message_parser.parse_message(raw_message)
             
             # Save to database
             response_id = self.database.save_standup_response(
@@ -234,6 +234,7 @@ class StandupBot(commands.Bot):
                 response_date=response_date,
                 today_work=today_work,
                 tomorrow_commitment=tomorrow_commitment,
+                blockers=blockers,
                 raw_message=raw_message
             )
             
@@ -248,9 +249,11 @@ class StandupBot(commands.Bot):
             # Send confirmation
             confirmation_parts = []
             if today_work:
-                confirmation_parts.append(f"✅ Recorded today's work: {today_work}")
+                confirmation_parts.append(f"✅ Recorded yesterday's work: {today_work}")
             if tomorrow_commitment:
-                confirmation_parts.append(f"📝 Recorded tomorrow's commitment: {tomorrow_commitment}")
+                confirmation_parts.append(f"📝 Recorded today's work: {tomorrow_commitment}")
+            if blockers:
+                confirmation_parts.append(f"🛑 Recorded blockers: {blockers}")
             
             if confirmation_parts:
                 confirmation = "\n".join(confirmation_parts)
@@ -271,14 +274,16 @@ class StandupBot(commands.Bot):
                             embed.title += " (⚠️ LATE SUBMISSION)"
                         
                         if today_work:
-                            embed.add_field(name="Today's Work", value=today_work, inline=False)
+                            embed.add_field(name="Yesterday's Work", value=today_work, inline=False)
                         if tomorrow_commitment:
-                            embed.add_field(name="Tomorrow's Commitment", value=tomorrow_commitment, inline=False)
+                            embed.add_field(name="Today's Work", value=tomorrow_commitment, inline=False)
+                        if blockers:
+                            embed.add_field(name="Blockers", value=blockers, inline=False)
                             
                         await channel.send(embed=embed)
                         logger.info(f"Forwarded DM report from {username} to channel {self.scheduler.channel_id}")
             else:
-                await message.reply("⚠️ I couldn't parse your response. Please make sure to mention what you worked on today and what you'll work on tomorrow.")
+                await message.reply("⚠️ I couldn't parse your response. Please make sure to mention what you worked on yesterday, what you plan to work on today, and any blockers.")
             
             logger.info(f"Saved standup response ID {response_id} for user {username}")
             
