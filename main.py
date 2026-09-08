@@ -183,19 +183,11 @@ class StandupBot(commands.Bot):
         if not is_dm and message.channel.id != self.scheduler.channel_id:
             return
         
-        # Check if we should track this message (within response window)
-        if self.last_standup_time:
+        # Only parse standup responses sent via direct message (DM)
+        if is_dm and self.last_standup_time:
             time_diff = (datetime.now() - self.last_standup_time).total_seconds() / 3600
             if time_diff <= RESPONSE_WINDOW_HOURS:
-                # If it's a DM, process it directly
-                if is_dm:
-                    await self.process_standup_response(message)
-                # Check if it's a reply to the standup message in the channel
-                elif message.reference and message.reference.message_id == self.standup_message_id:
-                    await self.process_standup_response(message)
-                # Also process direct messages in the channel (not replies)
-                elif not message.reference:
-                    await self.process_standup_response(message)
+                await self.process_standup_response(message)
         
         # Process any commands in the message
         await self.process_commands(message)
